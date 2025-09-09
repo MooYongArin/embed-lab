@@ -41,11 +41,17 @@
 
 /* Private variables ---------------------------------------------------------*/
 UART_HandleTypeDef huart2;
-uint16_t delay = 500;
-uint8_t counter = 0;
-uint32_t last_press = 0;
+uint32_t last_toggle = 0;
+uint8_t led_state = 0;
 uint32_t button_press_start = 0;
+
 char buffer[20];
+int idx = 0;
+
+int delay1 = 250;
+int delay2 = 750;
+
+uint8_t rx_data;
 /* USER CODE BEGIN PV */
 
 /* USER CODE END PV */
@@ -60,23 +66,21 @@ static void MX_USART2_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-	if (GPIO_Pin == B1_Pin)
-	{
-	    uint32_t now = HAL_GetTick();  // current time in ms
-	    if (now - last_press < 100) return; // ignore if < 100ms since last press
-	    last_press = now;
-		if (delay == 500) delay = 1000;
-		else if (delay == 1000) delay = 1500;
-		else if (delay == 1500) delay = 500;
-
-		counter++;
-		int len = sprintf(buffer, "%u", counter); // convert to string
-		HAL_UART_Transmit(&huart2, (uint8_t *)&buffer, len, HAL_MAX_DELAY);
-
-		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	}
+    if (huart->Instance == USART2)
+    {
+        HAL_UART_Transmit(&huart2, &rx_data, 1, HAL_MAX_DELAY);
+        HAL_UART_Receive_IT(&huart2, &rx_data, 1);
+        if(idx > 0) {
+        	if(rx_data == '!' && (buffer[idx - 1] == 'q' || buffer[idx - 1] == 'Q')) {
+        		HAL_UART_Transmit(&huart2, (uint8_t *)"N", 1, HAL_MAX_DELAY); // test
+        		if(led_state == 1) HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+        		while(1);
+        	}
+        }
+        buffer[idx++] = rx_data;
+    }
 }
 /* USER CODE END 0 */
 
@@ -111,7 +115,7 @@ int main(void)
   MX_GPIO_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_UART_Receive_IT(&huart2, &rx_data, 1);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -120,32 +124,49 @@ int main(void)
   {
     /* USER CODE END WHILE */
 	uint32_t now = HAL_GetTick();
-	if(now - last_press >= delay)
-	{
-	    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	    last_press = now;
-	}
-    // --- Button hold detection ---
-    if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET) // button pressed
-    {
-        if (button_press_start == 0)  // just pressed
-        {
-            button_press_start = now;
-        }
-        else if (now - button_press_start >= 3000) // held 3 seconds
-        {
-            counter = 0;  // reset counter
-            button_press_start = 0; // prevent repeated reset
-        }
+
+    // --- LED toggle with non-blocking delays ---
+    if (led_state == 0 && (now - last_toggle >= delay2)) {
+        HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+        last_toggle = now;
+        led_state = 1;
     }
-    else
-    {
-        button_press_start = 0; // reset when button released
+    else if (led_state == 1 && (now - last_toggle >= delay1)) {
+        HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+        last_toggle = now;
+        led_state = 0;
     }
+	  // --- Button hold detection ---
+	  if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13) == GPIO_PIN_RESET) // button pressed
+	  {
+		  if (button_press_start == 0)  // just pressed
+		  {
+			  button_press_start = now;
+		  }
+		  else if (now - button_press_start < 1000) // held <1 seconds
+		  {
+			  delay1 = 250;
+			  delay2 = 1750;
+		  }
+		  else if (now - button_press_start < 3000) // held 1-3 seconds
+		  {
+			  delay1 = 250;
+			  delay2 = 3750;
+		  }
+		  else if (now - button_press_start > 3000) // held >3 seconds
+		  {
+			  delay1 = 250;
+			  delay2 = 750;
+		  }
+	  }
+	  else
+	  {
+		  button_press_start = 0; // reset when button released
+	  }
+  }
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
-}
 
 /**
   * @brief System Clock Configuration
